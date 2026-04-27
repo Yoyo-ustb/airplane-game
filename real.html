@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>飞机大战：终极进化版</title>
+    <style>
+        body {
+            background-color: #050505;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            color: white;
+            font-family: 'PingFang SC', sans-serif;
+            overflow: hidden;
+        }
+        #game-container { position: relative; transition: transform 0.1s; }
+        canvas {
+            border: 4px solid #333;
+            background: black;
+            display: none;
+            box-shadow: 0 0 50px rgba(0, 250, 250, 0.1);
+        }
+        .panel {
+            text-align: center;
+            background: rgba(30, 30, 30, 0.95);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 0 40px rgba(0,0,0,0.8);
+            width: 420px;
+            border: 1px solid #444;
+            z-index: 10;
+        }
+        #result-panel { display: none; }
+        .plane-options { display: flex; gap: 15px; margin: 20px 0; justify-content: center; }
+        .plane-card { border: 2px solid #555; padding: 10px; cursor: pointer; border-radius: 12px; flex: 1; transition: 0.3s; }
+        .plane-card.selected { border-color: #00faff; background: #222; box-shadow: 0 0 15px #00faff; }
+        button { padding: 12px 40px; font-size: 18px; background: #00faff; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { background: #00d4d4; transform: scale(1.05); }
+        .stat-line { font-size: 24px; margin: 15px 0; color: #ffcc00; }
+        #ui-layer {
+            position: absolute; top: 15px; left: 15px; display: none; font-size: 18px;
+            text-shadow: 2px 2px 4px #000; color: #00faff; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="menu" class="panel">
+        <h1 style="letter-spacing: 4px;">星际突围</h1>
+        <p>选择战机类型</p>
+        <div class="plane-options">
+            <div class="plane-card selected" id="p1" onclick="selectPlane('#00faff', 'p1')">
+                <div style="color:#00faff; font-size:24px;">▲</div><p>均衡型</p>
+            </div>
+            <div class="plane-card" id="p2" onclick="selectPlane('#ff00ff', 'p2')">
+                <div style="color:#ff00ff; font-size:24px;">◈</div><p>灵动型</p>
+            </div>
+            <div class="plane-card" id="p3" onclick="selectPlane('#00ff00', 'p3')">
+                <div style="color:#00ff00; font-size:24px;">▼</div><p>重装型</p>
+            </div>
+        </div>
+        <button onclick="startGame()">建立连接</button>
+        <p style="font-size: 12px; color: #666; margin-top: 15px;">ASWD 移动 | 空格 射击 | Q 紧急折返</p>
+    </div>
+
+    <div id="result-panel" class="panel">
+        <h1 id="result-title">战斗数据统计</h1>
+        <div class="stat-line">摧毁目标：<span id="final-kills">0</span></div>
+        <div class="stat-line">最终评分：<span id="final-score">0</span></div>
+        <button onclick="backToMenu()">重启任务</button>
+    </div>
+
+    <div id="game-container">
+        <div id="ui-layer">
+            能量(分): <span id="scoreDisplay">5</span> | 
+            摧毁: <span id="killDisplay">0</span> | 
+            状态: <span id="powerDisplay" style="color:#fff">常规火力</span>
+        </div>
+        <canvas id="gameCanvas" width="550" height="350"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('game-container');
+        const menu = document.getElementById('menu');
+        const resPanel = document.getElementById('result-panel');
+        const uiLayer = document.getElementById('ui-layer');
+
+        let score = 5, kills = 0, gameActive = false, selectedColor = '#00faff';
+        let animationId, frameCount = 0;
+        let powerUpTime = 0; // 强化时间
+        const keys = {};
+
+        // 实体数组
+        let player = { x: 275, y: 280, w: 30, h: 30, speed: 3.2 };
+        let bullets = [], enemies = [], coins = [], particles = [], stars = [], powerups = [];
+
+        // 初始化背景星星
+        for(let i=0; i<40; i++) {
+            stars.push({x: Math.random()*canvas.width, y: Math.random()*canvas.height, s: Math.random()*2, opacity: Math.random()});
+        }
+
+        function selectPlane(color, id) {
+            selectedColor = color;
+            document.querySelectorAll('.plane-card').forEach(el => el.classList.remove('selected'));
+            document.getElementById(id).classList.add('selected');
+        }
+
+        function startGame() {
+            menu.style.display = 'none'; resPanel.style.display = 'none';
+            canvas.style.display = 'block'; uiLayer.style.display = 'block';
+            score = 5; kills = 0; powerUpTime = 0;
+            bullets = []; enemies = []; coins = []; particles = []; powerups = [];
+            player.x = canvas.width/2 - 15; player.y = canvas.height - 60;
+            gameActive = true; animate();
+        }
+
+        function createParticles(x, y, color) {
+            for(let i=0; i<10; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10,
+                    life: 1.0, color: color
+                });
+            }
+        }
+
+        function shakeScreen() {
+            container.style.transform = `translate(${(Math.random()-0.5)*10}px, ${(Math.random()-0.5)*10}px)`;
+            setTimeout(() => container.style.transform = 'translate(0,0)', 50);
+        }
+
+        function showResult(title) {
+            gameActive = false; cancelAnimationFrame(animationId);
+            document.getElementById('result-title').innerText = title;
+            document.getElementById('final-kills').innerText = kills;
+            document.getElementById('final-score').innerText = score;
+            canvas.style.display = 'none'; uiLayer.style.display = 'none';
+            resPanel.style.display = 'block';
+        }
+
+        function backToMenu() { resPanel.style.display = 'none'; menu.style.display = 'block'; }
+
+        window.addEventListener('keydown', e => {
+            const k = e.key.toLowerCase(); keys[k] = true;
+            if (k === 'q' && gameActive) showResult("任务取消");
+            if (e.code === 'Space' && gameActive) {
+                if (powerUpTime > 0) {
+                    bullets.push({x: player.x, y: player.y, w: 4, h: 12}, {x: player.x+26, y: player.y, w: 4, h: 12});
+                } else {
+                    bullets.push({x: player.x+13, y: player.y, w: 4, h: 12});
+                }
+            }
+        });
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+        function update() {
+            if (!gameActive) return;
+            frameCount++;
+
+            // 1. 移动玩家
+            if (keys['w'] && player.y > 0) player.y -= player.speed;
+            if (keys['s'] && player.y < canvas.height - player.h) player.y += player.speed;
+            if (keys['a'] && player.x > 0) player.x -= player.speed;
+            if (keys['d'] && player.x < canvas.width - player.w) player.x += player.speed;
+
+            // 2. 动态难度：基于摧毁数提升敌机速度
+            let baseSpeed = 2.0 + (kills / 15);
+            let spawnRate = 0.02 + (kills / 500);
+
+            // 3. 生成逻辑
+            if (Math.random() < spawnRate) enemies.push({ x: Math.random()*(canvas.width-30), y: -30, w: 30, h: 25, s: baseSpeed });
+            if (Math.random() < 0.006) coins.push({ x: Math.random()*(canvas.width-20), y: -20, s: 1.5 });
+            if (Math.random() < 0.002) powerups.push({ x: Math.random()*(canvas.width-20), y: -20, s: 1.2 });
+
+            // 4. 逻辑处理：敌机
+            enemies.forEach((e, i) => {
+                e.y += e.s;
+                bullets.forEach((b, bi) => {
+                    if (b.x < e.x+e.w && b.x+b.w > e.x && b.y < e.y+e.h && b.y+b.h > e.y) {
+                        createParticles(e.x+15, e.y+12, '#f44');
+                        enemies.splice(i, 1); bullets.splice(bi, 1);
+                        score++; kills++;
+                    }
+                });
+                if (e.x < player.x+player.w && e.x+e.w > player.x && e.y < player.y+player.h && e.y+e.h > player.y) {
+                    enemies.splice(i, 1); score--; shakeScreen();
+                }
+                if (e.y > canvas.height) enemies.splice(i, 1);
+            });
+
+            // 5. 逻辑处理：道具
+            if(powerUpTime > 0) powerUpTime--;
+            powerups.forEach((p, i) => {
+                p.y += p.s;
+                if (p.x < player.x+player.w && p.x+20 > player.x && p.y < player.y+player.h && p.y+20 > player.y) {
+                    powerups.splice(i, 1); powerUpTime = 400; // 约6-7秒双倍火力
+                }
+            });
+
+            coins.forEach((c, i) => {
+                c.y += c.s;
+                if (c.x < player.x+player.w && c.x+20 > player.x && c.y < player.y+player.h && c.y+20 > player.y) {
+                    coins.splice(i, 1); score += 5;
+                }
+                if (c.y > canvas.height) coins.splice(i, 1);
+            });
+
+            // 6. 逻辑处理：子弹与粒子
+            bullets.forEach((b, i) => { b.y -= 7; if (b.y < 0) bullets.splice(i, 1); });
+            particles.forEach((p, i) => {
+                p.x += p.vx; p.y += p.vy; p.life -= 0.03;
+                if (p.life <= 0) particles.splice(i, 1);
+            });
+
+            // UI 更新
+            document.getElementById('scoreDisplay').innerText = score;
+            document.getElementById('killDisplay').innerText = kills;
+            document.getElementById('powerDisplay').innerText = powerUpTime > 0 ? ">>> 双倍火力 <<<" : "常规火力";
+            document.getElementById('powerDisplay').style.color = powerUpTime > 0 ? "#ff00ff" : "#fff";
+            
+            if (score <= 0) showResult("任务失败");
+        }
+
+        function draw() {
+            ctx.fillStyle = "black"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 绘背景星空
+            stars.forEach(s => {
+                ctx.fillStyle = `rgba(255,255,255,${s.opacity})`;
+                ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, Math.PI*2); ctx.fill();
+                s.y += 0.5; if(s.y > canvas.height) s.y = 0;
+            });
+
+            // 绘粒子
+            particles.forEach(p => {
+                ctx.fillStyle = p.color; ctx.globalAlpha = p.life;
+                ctx.fillRect(p.x, p.y, 3, 3);
+            });
+            ctx.globalAlpha = 1.0;
+
+            // 绘战机
+            ctx.fillStyle = selectedColor;
+            ctx.beginPath();
+            ctx.moveTo(player.x+15, player.y); ctx.lineTo(player.x, player.y+30);
+            ctx.lineTo(player.x+15, player.y+22); ctx.lineTo(player.x+30, player.y+30);
+            ctx.closePath(); ctx.fill();
+            if(powerUpTime > 0) { // 强化特效
+                ctx.strokeStyle = "#ff00ff"; ctx.strokeRect(player.x-2, player.y-2, 34, 34);
+            }
+
+            // 绘子弹
+            ctx.fillStyle = powerUpTime > 0 ? '#ff00ff' : '#00faff';
+            bullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+
+            // 绘敌机
+            ctx.fillStyle = '#ff4444';
+            enemies.forEach(e => {
+                ctx.beginPath(); ctx.moveTo(e.x+15, e.y+20); ctx.lineTo(e.x, e.y); ctx.lineTo(e.x+30, e.y); ctx.fill();
+            });
+
+            // 绘道具
+            coins.forEach(c => {
+                ctx.fillStyle = '#ffcc00'; ctx.beginPath(); ctx.arc(c.x+10, c.y+10, 8, 0, Math.PI*2); ctx.fill();
+            });
+            powerups.forEach(p => {
+                ctx.fillStyle = '#ff00ff'; ctx.font = "20px Arial"; ctx.fillText("★", p.x, p.y+15);
+            });
+        }
+
+        function animate() {
+            if (!gameActive) return;
+            update(); draw();
+            animationId = requestAnimationFrame(animate);
+        }
+    </script>
+</body>
+</html>
