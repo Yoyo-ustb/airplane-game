@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>飞机大战：金币与成就版</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            color: white;
+            font-family: 'PingFang SC', sans-serif;
+            overflow: hidden;
+        }
+        #game-container { position: relative; }
+        canvas {
+            border: 4px solid #444;
+            background: radial-gradient(circle, #151515 0%, #000 100%);
+            display: none;
+            box-shadow: 0 0 30px rgba(0,0,0,1);
+        }
+        /* 菜单和结算面板共用样式 */
+        .panel {
+            text-align: center;
+            background: rgba(40, 40, 40, 0.95);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 0 40px rgba(0,0,0,0.8);
+            width: 420px;
+            border: 1px solid #555;
+        }
+        #result-panel { display: none; } /* 初始隐藏结算面板 */
+
+        .plane-options {
+            display: flex; gap: 15px; margin: 20px 0; justify-content: center;
+        }
+        .plane-card {
+            border: 2px solid #555; padding: 10px; cursor: pointer; border-radius: 12px; flex: 1; transition: 0.3s;
+        }
+        .plane-card.selected { border-color: #00faff; background: #333; box-shadow: 0 0 15px #00faff; }
+        
+        button {
+            padding: 12px 40px; font-size: 18px; background: #00faff; border: none; border-radius: 8px;
+            cursor: pointer; font-weight: bold; transition: 0.2s; margin-top: 10px;
+        }
+        button:hover { background: #00d4d4; transform: scale(1.05); }
+
+        .stat-line { font-size: 24px; margin: 15px 0; color: #ffcc00; }
+        #ui-layer {
+            position: absolute; top: 15px; left: 15px; display: none; font-size: 18px;
+            text-shadow: 2px 2px 4px #000; color: #00faff;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="menu" class="panel">
+        <h1>精锐飞行员</h1>
+        <p>选择你的战机：</p>
+        <div class="plane-options">
+            <div class="plane-card selected" id="p1" onclick="selectPlane('#00faff', 'p1')">
+                <div style="color:#00faff; font-size:20px;">▲</div><p>青鸟</p>
+            </div>
+            <div class="plane-card" id="p2" onclick="selectPlane('#ff00ff', 'p2')">
+                <div style="color:#ff00ff; font-size:20px;">◈</div><p>幻影</p>
+            </div>
+            <div class="plane-card" id="p3" onclick="selectPlane('#00ff00', 'p3')">
+                <div style="color:#00ff00; font-size:20px;">▼</div><p>翡翠</p>
+            </div>
+        </div>
+        <button onclick="startGame()">出击</button>
+        <p style="font-size: 12px; color: #888; margin-top: 15px;">ASWD 移动 | 空格 发射 | Q 撤退</p>
+    </div>
+
+    <div id="result-panel" class="panel">
+        <h1 id="result-title">战斗报告</h1>
+        <div class="stat-line">击落敌机：<span id="final-kills" style="color: #fff;">0</span></div>
+        <div class="stat-line">最终得分：<span id="final-score" style="color: #fff;">0</span></div>
+        <button onclick="backToMenu()">返回整备</button>
+    </div>
+
+    <div id="game-container">
+        <div id="ui-layer">得分: <span id="scoreDisplay">5</span></div>
+        <canvas id="gameCanvas" width="550" height="350"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const menu = document.getElementById('menu');
+        const resPanel = document.getElementById('result-panel');
+        const uiLayer = document.getElementById('ui-layer');
+
+        let score = 5;
+        let kills = 0;
+        let gameActive = false;
+        let selectedColor = '#00faff';
+        let animationId;
+        const keys = {};
+
+        // 玩家属性 - 速度调慢
+        const player = { x: 275, y: 280, w: 34, h: 34, speed: 3.2 };
+        let bullets = [];
+        let enemies = [];
+        let coins = [];
+
+        function selectPlane(color, id) {
+            selectedColor = color;
+            document.querySelectorAll('.plane-card').forEach(el => el.classList.remove('selected'));
+            document.getElementById(id).classList.add('selected');
+        }
+
+        function startGame() {
+            menu.style.display = 'none';
+            resPanel.style.display = 'none';
+            canvas.style.display = 'block';
+            uiLayer.style.display = 'block';
+            score = 5; kills = 0;
+            bullets = []; enemies = []; coins = [];
+            player.x = canvas.width/2 - 17; player.y = canvas.height - 60;
+            gameActive = true;
+            animate();
+        }
+
+        function showResult(title) {
+            gameActive = false;
+            cancelAnimationFrame(animationId);
+            document.getElementById('result-title').innerText = title;
+            document.getElementById('final-kills').innerText = kills;
+            document.getElementById('final-score').innerText = score;
+            
+            canvas.style.display = 'none';
+            uiLayer.style.display = 'none';
+            resPanel.style.display = 'block';
+        }
+
+        function backToMenu() {
+            resPanel.style.display = 'none';
+            menu.style.display = 'block';
+        }
+
+        window.addEventListener('keydown', e => {
+            const k = e.key.toLowerCase();
+            keys[k] = true;
+            if (k === 'q' && gameActive) showResult("中途撤退");
+            if (e.code === 'Space' && gameActive) {
+                bullets.push({ x: player.x + 15, y: player.y, w: 4, h: 12 });
+            }
+        });
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+        function update() {
+            if (!gameActive) return;
+
+            // 移动
+            if (keys['w'] && player.y > 0) player.y -= player.speed;
+            if (keys['s'] && player.y < canvas.height - player.h) player.y += player.speed;
+            if (keys['a'] && player.x > 0) player.x -= player.speed;
+            if (keys['d'] && player.x < canvas.width - player.w) player.x += player.speed;
+
+            // 子弹移动
+            bullets.forEach((b, i) => {
+                b.y -= 7;
+                if (b.y < 0) bullets.splice(i, 1);
+            });
+
+            // 生成敌机和金币 (速度调慢至 2.2)
+            if (Math.random() < 0.025) enemies.push({ x: Math.random()*(canvas.width-30), y: -30, w: 30, h: 25, s: 2.2 });
+            if (Math.random() < 0.008) coins.push({ x: Math.random()*(canvas.width-20), y: -20, r: 10, s: 1.8 });
+
+            // 敌机逻辑
+            enemies.forEach((e, i) => {
+                e.y += e.s;
+                bullets.forEach((b, bi) => {
+                    if (b.x < e.x + e.w && b.x + b.w > e.x && b.y < e.y + e.h && b.y + b.h > e.y) {
+                        enemies.splice(i, 1); bullets.splice(bi, 1);
+                        score++; kills++;
+                    }
+                });
+                if (e.x < player.x + player.w && e.x + e.w > player.x && e.y < player.y + player.h && e.y + e.h > player.y) {
+                    enemies.splice(i, 1); score--;
+                }
+                if (e.y > canvas.height) enemies.splice(i, 1);
+            });
+
+            // 金币逻辑
+            coins.forEach((c, i) => {
+                c.y += c.s;
+                // 玩家吃金币或子弹击中金币都加分
+                const hitByPlayer = (c.x < player.x + player.w && c.x + 20 > player.x && c.y < player.y + player.h && c.y + 20 > player.y);
+                let hitByBullet = false;
+                bullets.forEach((b, bi) => {
+                    if (b.x < c.x + 20 && b.x + b.w > c.x && b.y < c.y + 20 && b.y + b.h > c.y) {
+                        hitByBullet = true;
+                        bullets.splice(bi, 1);
+                    }
+                });
+
+                if (hitByPlayer || hitByBullet) {
+                    coins.splice(i, 1);
+                    score += 5; // 金币加五分
+                } else if (c.y > canvas.height) {
+                    coins.splice(i, 1);
+                }
+            });
+
+            document.getElementById('scoreDisplay').innerText = score;
+            if (score <= 0) showResult("任务失败");
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 玩家战机 - 改进外观
+            ctx.fillStyle = selectedColor;
+            ctx.beginPath();
+            ctx.moveTo(player.x + 17, player.y); // 机头
+            ctx.lineTo(player.x, player.y + player.h); // 左翼
+            ctx.lineTo(player.x + 17, player.y + 25); // 机身后部
+            ctx.lineTo(player.x + player.w, player.y + player.h); // 右翼
+            ctx.closePath();
+            ctx.fill();
+            // 机翼装饰
+            ctx.fillStyle = "rgba(255,255,255,0.3)";
+            ctx.fillRect(player.x + 5, player.y + 20, 5, 10);
+            ctx.fillRect(player.x + 24, player.y + 20, 5, 10);
+
+            // 子弹
+            ctx.fillStyle = '#00faff';
+            bullets.forEach(b => {
+                ctx.shadowBlur = 10; ctx.shadowColor = "#00faff";
+                ctx.fillRect(b.x, b.y, b.w, b.h);
+                ctx.shadowBlur = 0;
+            });
+
+            // 敌机 - 改进形状
+            ctx.fillStyle = '#ff4444';
+            enemies.forEach(e => {
+                ctx.beginPath();
+                ctx.moveTo(e.x + 15, e.y + 25);
+                ctx.lineTo(e.x, e.y);
+                ctx.lineTo(e.x + 30, e.y);
+                ctx.fill();
+            });
+
+            // 金币 - 黄色圆形带 $
+            ctx.fillStyle = '#ffcc00';
+            coins.forEach(c => {
+                ctx.beginPath();
+                ctx.arc(c.x + 10, c.y + 10, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = "#000";
+                ctx.font = "bold 14px Arial";
+                ctx.fillText("$", c.x + 6, c.y + 15);
+                ctx.fillStyle = '#ffcc00';
+            });
+        }
+
+        function animate() {
+            if (!gameActive) return;
+            update(); draw();
+            animationId = requestAnimationFrame(animate);
+        }
+    </script>
+</body>
+</html>

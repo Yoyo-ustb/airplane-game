@@ -1,0 +1,346 @@
+#include <iostream>
+#include <vector>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <conio.h>
+#include <windows.h>
+using namespace std;
+
+const int WIDTH = 55;
+const int HEIGHT = 35;
+const int ENEMY_MAX = 50;
+const int INITIAL_SCORE = 10;
+
+const int PLAYER_W = 5;
+const int PLAYER_H = 3;
+const int ENEMY_W = 3;
+const int ENEMY_H = 2;
+
+char canvas[HEIGHT][WIDTH];
+
+
+void gotoXY(int row, int col)
+{
+    COORD pos;
+    pos.X = static_cast<SHORT>(col);
+    pos.Y = static_cast<SHORT>(row);
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), pos);
+}
+
+void hideCursor()
+{
+    CONSOLE_CURSOR_INFO info = { 1, FALSE };
+    SetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info);
+}
+
+void showCursor()
+{
+    CONSOLE_CURSOR_INFO info = { 1, TRUE };
+    SetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info);
+}
+
+void clearScreen()
+{
+    system("cls");
+}
+
+bool consoleIsLargeEnough()
+{
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info))
+        return true;
+
+    int cols = info.srWindow.Right - info.srWindow.Left + 1;
+    int rows = info.srWindow.Bottom - info.srWindow.Top + 1;
+    return cols >= WIDTH && rows >= HEIGHT;
+}
+
+void waitForConsoleSize()
+{
+    while (!consoleIsLargeEnough())
+    {
+        clearScreen();
+        cout << "Please enlarge this PowerShell window.\n";
+        cout << "Required size: " << WIDTH << " columns x " << HEIGHT << " rows.\n";
+        cout << "After resizing, press any key to continue...";
+        _getch();
+    }
+    clearScreen();
+}
+
+// 游戏结构体
+struct WJ { int x, y; };
+struct Bullet { int x, y; bool fromPlayer; };
+struct Enemy { int x, y; int shootTimer; };
+
+// 全局变量
+int score = INITIAL_SCORE;
+WJ player;
+vector<Bullet> bullets;
+vector<Enemy> enemies;
+
+// 画布绘制工具
+void putChar(int row, int col, char ch)
+{
+    if (row >= 0 && row < HEIGHT && col >= 0 && col < WIDTH)
+        canvas[row][col] = ch;
+}
+
+void putString(int row, int col, const char* s)
+{
+    for (int i = 0; s[i] != '\0'; ++i)
+        putChar(row, col + i, s[i]);
+}
+
+void clearCanvas()
+{
+    for (int r = 0; r < HEIGHT; ++r)
+        for (int c = 0; c < WIDTH; ++c)
+            canvas[r][c] = ' ';
+
+    // 边框
+    for (int c = 0; c < WIDTH; ++c)
+    {
+        putChar(0, c, '-');
+        putChar(HEIGHT - 1, c, '-');
+    }
+    for (int r = 0; r < HEIGHT; ++r)
+    {
+        putChar(r, 0, '|');
+        putChar(r, WIDTH - 1, '|');
+    }
+}
+
+// 游戏元素绘制
+void drawPlayer(int px, int py)
+{
+    putString(px, py, " /=\\");
+    putString(px + 1, py, "<(*)>");
+    putString(px + 2, py, " * *");
+}
+
+void drawEnemy(int ex, int ey)
+{
+    putString(ex, ey, "\\+/");
+    putString(ex + 1, ey, " | ");
+}
+
+void drawHUD()
+{
+    char hud[WIDTH - 2];
+    snprintf(hud, sizeof(hud), "Score:%d Enemy:%d/%d  WASD Move  Space Fire  Q Quit",
+             score, (int)enemies.size(), ENEMY_MAX);
+    putString(1, 2, hud);
+}
+
+void present()
+{
+    gotoXY(0, 0);
+    for (int r = 0; r < HEIGHT; ++r)
+    {
+        cout.write(canvas[r], WIDTH);
+        if (r != HEIGHT - 1)
+            cout << "\r\n";
+    }
+    cout.flush();
+}
+
+// 边界与碰撞检测
+bool inBounds(int row, int col)
+{
+    return row >= 1 && row < HEIGHT - 1 && col >= 1 && col < WIDTH - 1;
+}
+
+bool playerCanMoveTo(int row, int col)
+{
+    return row >= 1 && row <= HEIGHT - 1 - PLAYER_H
+        && col >= 1 && col <= WIDTH - 1 - PLAYER_W;
+}
+
+bool pointInRect(int px, int py, int rx, int ry, int rw, int rh)
+{
+    return px >= rx && px < rx + rh && py >= ry && py < ry + rw;
+}
+
+bool bulletHitsPlayer(const Bullet& b)
+{
+    return !b.fromPlayer && pointInRect(b.x, b.y, player.x, player.y, PLAYER_W, PLAYER_H);
+}
+
+bool bulletHitsEnemy(const Bullet& b, const Enemy& e)
+{
+    return b.fromPlayer && pointInRect(b.x, b.y, e.x, e.y, ENEMY_W, ENEMY_H);
+}
+
+
+void spawnEnemy()
+{
+    if ((int)enemies.size() >= ENEMY_MAX)
+        return;
+    Enemy e;
+    e.x = 1 + rand() % (HEIGHT - 10);
+    e.y = 1 + rand() % (WIDTH - 1 - ENEMY_W);
+    e.shootTimer = rand() % 40;
+    enemies.push_back(e);
+}
+
+void handleInput()
+{
+    if (!_kbhit()) return;
+
+    char key = _getch();
+    if (key == ' ')
+    {
+        Bullet b;
+        b.x = player.x - 1;
+        b.y = player.y + PLAYER_W / 2;
+        b.fromPlayer = true;
+        if (inBounds(b.x, b.y))
+            bullets.push_back(b);
+        return;
+    }
+
+    int nx = player.x;
+    int ny = player.y;
+    if (key == 'w' || key == 'W') nx--;
+    else if (key == 's' || key == 'S') nx++;
+    else if (key == 'a' || key == 'A') ny--;
+    else if (key == 'd' || key == 'D') ny++;
+    else if (key == 'q' || key == 'Q')
+    {
+        score = 0;
+        return;
+    }
+
+    if (playerCanMoveTo(nx, ny))
+    {
+        player.x = nx;
+        player.y = ny;
+    }
+}
+
+void updateBullets()
+{
+    for (size_t i = 0; i < bullets.size(); )
+    {
+        bullets[i].fromPlayer ? bullets[i].x-- : bullets[i].x++;
+
+        if (!inBounds(bullets[i].x, bullets[i].y))
+            bullets.erase(bullets.begin() + i);
+        else
+            ++i;
+    }
+}
+
+void updateEnemies(int frame)
+{
+    if (frame % 25 == 0)
+        spawnEnemy();
+
+    for (size_t i = 0; i < enemies.size(); )
+    {
+        if (frame % 20 == 0)
+            enemies[i].x++;
+
+        enemies[i].shootTimer--;
+        if (enemies[i].shootTimer <= 0)
+        {
+            Bullet b;
+            b.x = enemies[i].x + ENEMY_H;
+            b.y = enemies[i].y + ENEMY_W / 2;
+            b.fromPlayer = false;
+            if (inBounds(b.x, b.y))
+                bullets.push_back(b);
+            enemies[i].shootTimer = 30 + rand() % 40;
+        }
+
+        if (enemies[i].x >= HEIGHT - 2)
+            enemies.erase(enemies.begin() + i);
+        else
+            ++i;
+    }
+}
+
+void checkCollisions()
+{
+    // 玩家子弹打敌人
+    for (size_t bi = 0; bi < bullets.size(); )
+    {
+        bool removed = false;
+        for (size_t ei = 0; ei < enemies.size(); ++ei)
+        {
+            if (bulletHitsEnemy(bullets[bi], enemies[ei]))
+            {
+                enemies.erase(enemies.begin() + ei);
+                bullets.erase(bullets.begin() + bi);
+                score++;
+                removed = true;
+                break;
+            }
+        }
+        if (!removed) ++bi;
+    }
+
+    // 敌人子弹打玩家
+    for (size_t bi = 0; bi < bullets.size(); )
+    {
+        if (bulletHitsPlayer(bullets[bi]))
+        {
+            bullets.erase(bullets.begin() + bi);
+            score--;
+        }
+        else ++bi;
+    }
+}
+
+void render()
+{
+    clearCanvas();
+    drawHUD();
+
+    for (auto& b : bullets)
+        putChar(b.x, b.y, b.fromPlayer ? '^' : 'v');
+
+    for (auto& e : enemies)
+        drawEnemy(e.x, e.y);
+
+    drawPlayer(player.x, player.y);
+    present();
+}
+
+
+int main()
+{
+    srand(static_cast<unsigned>(time(nullptr)));
+    waitForConsoleSize();
+    clearScreen();
+    hideCursor();
+
+    player.x = HEIGHT - 1 - PLAYER_H;
+    player.y = (WIDTH - PLAYER_W) / 2;
+
+    int frame = 0;
+    while (score > 0)
+    {
+        handleInput();
+        updateBullets();
+        updateEnemies(frame);
+        checkCollisions();
+        render();
+
+        Sleep(40);
+        frame++;
+    }
+
+    // game over
+    gotoXY(HEIGHT / 2, WIDTH / 2 - 8);
+    cout << "Game Over! Score: " << score;
+    gotoXY(HEIGHT / 2 + 1, WIDTH / 2 - 8);
+    cout << "Press any key to exit...";
+    _getch();
+
+    showCursor();
+    clearScreen();
+    return 0;
+}

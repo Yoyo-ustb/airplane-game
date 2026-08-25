@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>飞机大战 · Web 版（C++ / WebAssembly）</title>
+<style>
+  :root {
+    --bg: #060914;
+    --panel: rgba(18, 24, 45, 0.85);
+    --accent: #38e1ff;
+    --accent2: #ff5d73;
+    --gold: #ffd166;
+    --text: #e8f0ff;
+    --dim: #8aa0c8;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1200px 600px at 50% -10%, #16213f 0%, transparent 60%),
+      radial-gradient(800px 500px at 90% 110%, #1b1030 0%, transparent 55%),
+      var(--bg);
+    overflow: hidden;
+  }
+  #stage {
+    position: relative;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+
+  /* ---------- 游戏主体 ---------- */
+  .game-shell {
+    display: flex;
+    gap: 22px;
+    align-items: stretch;
+    background: var(--panel);
+    border: 1px solid rgba(120, 160, 255, 0.18);
+    border-radius: 18px;
+    padding: 22px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255,255,255,0.02);
+    backdrop-filter: blur(6px);
+  }
+  #screen {
+    margin: 0;
+    font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
+    font-size: 16px;
+    line-height: 1.04;
+    letter-spacing: 1px;
+    color: #b9f4ff;
+    text-shadow: 0 0 6px rgba(56, 225, 255, 0.45);
+    background: #02060f;
+    border: 1px solid rgba(56, 225, 255, 0.25);
+    border-radius: 12px;
+    padding: 14px 16px;
+    white-space: pre;
+    user-select: none;
+  }
+
+  /* ---------- 侧边信息栏 ---------- */
+  .side {
+    width: 210px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .brand { font-size: 20px; font-weight: 700; letter-spacing: 1px; }
+  .brand span { color: var(--accent); }
+  .stat-card {
+    background: rgba(8, 14, 30, 0.7);
+    border: 1px solid rgba(120, 160, 255, 0.14);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .stat-row { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 0; }
+  .stat-row .label { color: var(--dim); font-size: 13px; }
+  .stat-row .value { font-size: 20px; font-weight: 700; }
+  .value.score { color: var(--gold); }
+  .value.hits  { color: var(--accent); }
+  .value.enemy { color: var(--accent2); }
+  .keys { font-size: 12.5px; color: var(--dim); line-height: 1.8; }
+  .keys b { color: var(--text); }
+
+  /* ---------- 覆盖层（开始 / 结束）---------- */
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(4, 7, 16, 0.78);
+    backdrop-filter: blur(8px);
+    z-index: 10;
+  }
+  .overlay.hidden { display: none; }
+  .card {
+    width: min(560px, 92vw);
+    background: linear-gradient(180deg, rgba(24,32,60,0.95), rgba(12,16,32,0.95));
+    border: 1px solid rgba(120, 160, 255, 0.22);
+    border-radius: 20px;
+    padding: 34px 36px;
+    box-shadow: 0 30px 90px rgba(0,0,0,0.6);
+    text-align: center;
+  }
+  .title {
+    font-size: 34px;
+    font-weight: 800;
+    margin: 0 0 6px;
+    letter-spacing: 2px;
+  }
+  .title .a { color: var(--accent); }
+  .title .b { color: var(--accent2); }
+  .subtitle { color: var(--dim); margin: 0 0 22px; font-size: 14px; }
+  .ascii-preview {
+    font-family: "Consolas", monospace;
+    color: #b9f4ff;
+    text-shadow: 0 0 6px rgba(56,225,255,0.4);
+    white-space: pre;
+    font-size: 14px;
+    line-height: 1.15;
+    margin: 0 auto 22px;
+    display: inline-block;
+    text-align: left;
+  }
+  .howto {
+    text-align: left;
+    background: rgba(8,14,30,0.6);
+    border: 1px solid rgba(120,160,255,0.12);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin: 0 0 24px;
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.9;
+  }
+  .howto .k {
+    display: inline-block;
+    min-width: 24px;
+    padding: 1px 8px;
+    margin-right: 8px;
+    background: #0c1430;
+    border: 1px solid rgba(120,160,255,0.3);
+    border-radius: 6px;
+    font-family: monospace;
+    color: var(--accent);
+  }
+  .btn {
+    appearance: none;
+    border: none;
+    cursor: pointer;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #04121a;
+    background: linear-gradient(135deg, var(--accent), #5cffb0);
+    padding: 13px 40px;
+    border-radius: 999px;
+    box-shadow: 0 12px 30px rgba(56, 225, 255, 0.35);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 16px 40px rgba(56,225,255,0.5); }
+  .btn:active { transform: translateY(0); }
+
+  /* ---------- 结算成就 ---------- */
+  .rank {
+    font-size: 72px;
+    font-weight: 900;
+    line-height: 1;
+    margin: 4px 0 2px;
+    background: linear-gradient(135deg, var(--gold), #ff9f1c);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 30px rgba(255, 209, 102, 0.35);
+  }
+  .rank-label { color: var(--dim); margin-bottom: 18px; font-size: 14px; letter-spacing: 3px; }
+  .result-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .result-item {
+    background: rgba(8,14,30,0.65);
+    border: 1px solid rgba(120,160,255,0.14);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .result-item .num { font-size: 26px; font-weight: 800; color: var(--accent); }
+  .result-item .cap { font-size: 12.5px; color: var(--dim); margin-top: 2px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 24px; min-height: 10px; }
+  .badge {
+    font-size: 12.5px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(56,225,255,0.12);
+    border: 1px solid rgba(56,225,255,0.35);
+    color: var(--accent);
+  }
+  .badge.gold { background: rgba(255,209,102,0.14); border-color: rgba(255,209,102,0.45); color: var(--gold); }
+  #loading { color: var(--dim); font-size: 15px; }
+  .err { color: var(--accent2); font-size: 13px; margin-top: 14px; line-height: 1.7; text-align: left; }
+  code { background: #0c1430; padding: 2px 6px; border-radius: 5px; color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- 游戏主体 -->
+  <div class="game-shell">
+    <pre id="screen">加载中…</pre>
+    <div class="side">
+      <div class="brand">飞机<span>大战</span></div>
+      <div class="stat-card">
+        <div class="stat-row"><span class="label">分数</span><span id="hud-score" class="value score">10</span></div>
+        <div class="stat-row"><span class="label">击落</span><span id="hud-hits"  class="value hits">0</span></div>
+        <div class="stat-row"><span class="label">场上敌机</span><span id="hud-enemy" class="value enemy">0</span></div>
+      </div>
+      <div class="stat-card keys">
+        <b>操作说明</b><br>
+        W / A / S / D ：上下左右<br>
+        空格：发射子弹<br>
+        Q：直接结束本局<br>
+        <br>
+        击中敌机 +1 分<br>
+        被击中 −1 分，0 分结束
+      </div>
+    </div>
+  </div>
+
+  <!-- 开始界面 -->
+  <div id="start-overlay" class="overlay">
+    <div class="card">
+      <h1 class="title"><span class="a">飞机</span><span class="b">大战</span></h1>
+      <p class="subtitle">C++ 编译为 WebAssembly · 由 HTML 调用运行</p>
+      <div class="ascii-preview"> /=\
+&lt;(*)&gt;
+ * *</div>
+      <div class="howto">
+        <div><span class="k">W A S D</span> 控制飞机上下左右移动</div>
+        <div><span class="k">␣</span> 空格键发射子弹击落敌机</div>
+        <div><span class="k">Q</span> 随时结束本局并查看战绩</div>
+      </div>
+      <button id="start-btn" class="btn" disabled>
+        <span id="loading">引擎加载中…</span>
+        <span id="start-text" style="display:none">开始游戏</span>
+      </button>
+      <div id="load-error" class="err" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- 结束界面 -->
+  <div id="end-overlay" class="overlay hidden">
+    <div class="card">
+      <div id="rank" class="rank">A</div>
+      <div class="rank-label">本局评级</div>
+      <div class="result-grid">
+        <div class="result-item"><div id="r-hits" class="num">0</div><div class="cap">击落敌机</div></div>
+        <div class="result-item"><div id="r-acc"  class="num">0%</div><div class="cap">命中率</div></div>
+        <div class="result-item"><div id="r-time" class="num">0s</div><div class="cap">存活时间</div></div>
+        <div class="result-item"><div id="r-score" class="num">0</div><div class="cap">最终分数</div></div>
+      </div>
+      <div id="badges" class="badges"></div>
+      <button id="replay-btn" class="btn">再来一局</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- Emscripten 生成的胶水脚本（编译后产生 game.js / game.wasm）-->
+<script src="game.js"></script>
+<script>
+(function () {
+  const FRAME_MS = 40;          // 与原版 Sleep(40) 一致
+  const screenEl = document.getElementById('screen');
+  const startOverlay = document.getElementById('start-overlay');
+  const endOverlay = document.getElementById('end-overlay');
+  const startBtn = document.getElementById('start-btn');
+  const replayBtn = document.getElementById('replay-btn');
+
+  let mod = null;          // WASM 模块实例
+  let api = {};            // 包装后的 C++ 函数
+  let WIDTH = 55, HEIGHT = 35;
+  let canvasPtr = 0;
+  let loopId = null;
+  const pressed = new Set();
+  const INITIAL_SCORE_VIEW = 10; // 与 C++ INITIAL_SCORE 对应（用于“毫发无伤”判定）
+
+  // 加载并初始化 WebAssembly 模块
+  createGameModule().then((Module) => {
+    mod = Module;
+
+    // 优先直接用导出的 Module._wasm_*；不行则回退到 cwrap
+    function bind(name, ret, args) {
+      const direct = Module['_' + name];
+      if (typeof direct === 'function') return direct;
+      if (typeof Module.cwrap === 'function') return Module.cwrap(name, ret, args);
+      throw new Error('找不到导出函数: ' + name);
+    }
+
+    api = {
+      init:        bind('wasm_init', null, ['number']),
+      move:        bind('wasm_move', null, ['number']),
+      fire:        bind('wasm_fire', null, []),
+      update:      bind('wasm_update', null, []),
+      getCanvas:   bind('wasm_get_canvas', 'number', []),
+      getScore:    bind('wasm_get_score', 'number', []),
+      getHits:     bind('wasm_get_hits', 'number', []),
+      getShots:    bind('wasm_get_shots', 'number', []),
+      getFrames:   bind('wasm_get_frames', 'number', []),
+      getAlive:    bind('wasm_get_alive_enemies', 'number', []),
+      getEnemyTot: bind('wasm_get_enemy_total', 'number', []),
+      isOver:      bind('wasm_is_over', 'number', []),
+      getWidth:    bind('wasm_get_width', 'number', []),
+      getHeight:   bind('wasm_get_height', 'number', []),
+    };
+    WIDTH = api.getWidth();
+    HEIGHT = api.getHeight();
+    canvasPtr = api.getCanvas();
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('start-text').style.display = 'inline';
+    startBtn.disabled = false;
+  }).catch((e) => {
+    const box = document.getElementById('load-error');
+    box.style.display = 'block';
+    box.innerHTML =
+      '加载 / 初始化失败：' + (e && e.message ? e.message : e) + '<br>' +
+      '请确认已用 build.bat 编译，并通过本地服务器访问。';
+    console.error(e);
+  });
+
+  // 取 WASM 内存视图（兼容不同 Emscripten 版本）
+  function heapU8() {
+    if (mod.HEAPU8) return mod.HEAPU8;
+    if (mod.wasmMemory && mod.wasmMemory.buffer) return new Uint8Array(mod.wasmMemory.buffer);
+    if (mod.asm && mod.asm.memory) return new Uint8Array(mod.asm.memory.buffer);
+    throw new Error('无法访问 WASM 内存');
+  }
+
+  // 从 WASM 内存读取画布并渲染为字符网格
+  function draw() {
+    const bytes = heapU8().subarray(canvasPtr, canvasPtr + WIDTH * HEIGHT);
+    let out = '';
+    for (let r = 0; r < HEIGHT; r++) {
+      const start = r * WIDTH;
+      out += String.fromCharCode.apply(null, bytes.subarray(start, start + WIDTH));
+      if (r !== HEIGHT - 1) out += '\n';
+    }
+    screenEl.textContent = out;
+
+    document.getElementById('hud-score').textContent = api.getScore();
+    document.getElementById('hud-hits').textContent = api.getHits();
+    document.getElementById('hud-enemy').textContent =
+      api.getAlive() + ' / ' + api.getEnemyTot();
+  }
+
+  function tick() {
+    // 处理按住的方向键（每帧移动一格，手感顺滑）
+    if (pressed.has('w')) api.move(119);
+    if (pressed.has('s')) api.move(115);
+    if (pressed.has('a')) api.move(97);
+    if (pressed.has('d')) api.move(100);
+
+    api.update();
+    draw();
+
+    if (api.isOver()) {
+      stopLoop();
+      showResult();
+    }
+  }
+
+  function startLoop() {
+    stopLoop();
+    loopId = setInterval(tick, FRAME_MS);
+  }
+  function stopLoop() {
+    if (loopId !== null) { clearInterval(loopId); loopId = null; }
+  }
+
+  function startGame() {
+    api.init((Date.now() & 0xffffffff) >>> 0);
+    startOverlay.classList.add('hidden');
+    endOverlay.classList.add('hidden');
+    pressed.clear();
+    draw();
+    startLoop();
+  }
+
+  // 结算成就界面
+  function showResult() {
+    const hits = api.getHits();
+    const shots = api.getShots();
+    const frames = api.getFrames();
+    const score = api.getScore();
+
+    const acc = shots > 0 ? Math.round((hits / shots) * 100) : 0;
+    const seconds = (frames * FRAME_MS / 1000).toFixed(1);
+
+    let rank = 'D';
+    if (hits >= 25) rank = 'S';
+    else if (hits >= 18) rank = 'A';
+    else if (hits >= 12) rank = 'B';
+    else if (hits >= 6)  rank = 'C';
+
+    document.getElementById('rank').textContent = rank;
+    document.getElementById('r-hits').textContent = hits;
+    document.getElementById('r-acc').textContent = acc + '%';
+    document.getElementById('r-time').textContent = seconds + 's';
+    document.getElementById('r-score').textContent = score;
+
+    // 成就徽章
+    const badges = [];
+    if (hits >= 1)  badges.push(['首杀达成', false]);
+    if (hits >= 10) badges.push(['空战能手', false]);
+    if (hits >= 20) badges.push(['王牌飞行员', true]);
+    if (acc >= 50 && shots >= 5)  badges.push(['神准射手', false]);
+    if (acc >= 80 && shots >= 5)  badges.push(['弹无虚发', true]);
+    if (frames * FRAME_MS >= 30000) badges.push(['坚持不懈', false]);
+    if (score >= INITIAL_SCORE_VIEW) badges.push(['毫发无伤', true]);
+    if (badges.length === 0) badges.push(['再接再厉', false]);
+
+    const wrap = document.getElementById('badges');
+    wrap.innerHTML = '';
+    badges.forEach(([text, gold]) => {
+      const el = document.createElement('span');
+      el.className = 'badge' + (gold ? ' gold' : '');
+      el.textContent = text;
+      wrap.appendChild(el);
+    });
+
+    endOverlay.classList.remove('hidden');
+  }
+
+  // ---------- 键盘输入 ----------
+  window.addEventListener('keydown', (e) => {
+    if (startOverlay.classList.contains('hidden') === false) return;
+    if (endOverlay.classList.contains('hidden') === false) return;
+
+    const k = e.key.toLowerCase();
+    if (['w', 'a', 's', 'd', ' ', 'q'].includes(k) || e.key === ' ') e.preventDefault();
+
+    if (k === ' ') { api.fire(); return; }
+    if (k === 'q') { api.move(113); return; }
+    if (['w', 'a', 's', 'd'].includes(k)) pressed.add(k);
+  });
+  window.addEventListener('keyup', (e) => {
+    pressed.delete(e.key.toLowerCase());
+  });
+
+  startBtn.addEventListener('click', startGame);
+  replayBtn.addEventListener('click', startGame);
+})();
+</script>
+</body>
+</html>

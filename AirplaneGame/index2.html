@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>飞机大战：修复版</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            color: white;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        }
+        #game-container { position: relative; }
+        canvas {
+            border: 4px solid #444;
+            background: radial-gradient(circle, #111 0%, #000 100%);
+            display: none;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+        #menu {
+            text-align: center;
+            background: #333;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 0 30px rgba(0,0,0,0.5);
+            width: 400px;
+        }
+        .plane-options {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+            justify-content: center;
+        }
+        .plane-card {
+            border: 2px solid #555;
+            padding: 10px;
+            cursor: pointer;
+            border-radius: 8px;
+            flex: 1;
+            transition: 0.2s;
+        }
+        .plane-card.selected { border-color: #00faff; background: #444; box-shadow: 0 0 10px #00faff; }
+        
+        button {
+            padding: 12px 40px;
+            font-size: 18px;
+            background: #00faff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        button:hover { background: #00d4d4; transform: scale(1.05); }
+
+        #ui-layer {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            display: none;
+            font-size: 18px;
+            text-shadow: 1px 1px 2px black;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="menu">
+        <h1>飞机大战</h1>
+        <p>选择机型：</p>
+        <div class="plane-options">
+            <div class="plane-card selected" id="p1" onclick="selectPlane('#00faff', 'p1')">
+                <div style="color:#00faff; font-size:18px;">▲<br>主战机</div>
+            </div>
+            <div class="plane-card" id="p2" onclick="selectPlane('#ff00ff', 'p2')">
+                <div style="color:#ff00ff; font-size:18px;">◈<br>幻影</div>
+            </div>
+            <div class="plane-card" id="p3" onclick="selectPlane('#00ff00', 'p3')">
+                <div style="color:#00ff00; font-size:18px;">▼<br>突击</div>
+            </div>
+        </div>
+        <button onclick="startGame()">开始游戏</button>
+        <p style="font-size: 12px; color: #888; margin-top: 15px;">操作: ASWD 移动 | 空格 发射 | Q 退出</p>
+    </div>
+
+    <div id="game-container">
+        <div id="ui-layer">得分: <span id="scoreText">5</span></div>
+        <canvas id="gameCanvas" width="550" height="350"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const menu = document.getElementById('menu');
+        const uiLayer = document.getElementById('ui-layer');
+        const scoreText = document.getElementById('scoreText');
+
+        let score = 5;
+        let gameActive = false;
+        let selectedColor = '#00faff';
+        let animationId;
+        const keys = {};
+
+        // 玩家对象 - 速度已调慢 (由 6 降到 3)
+        const player = {
+            x: 275, y: 300, w: 30, h: 30, speed: 3.5 
+        };
+
+        let bullets = [];
+        let enemies = [];
+
+        function selectPlane(color, id) {
+            selectedColor = color;
+            document.querySelectorAll('.plane-card').forEach(el => el.classList.remove('selected'));
+            document.getElementById(id).classList.add('selected');
+        }
+
+        function startGame() {
+            menu.style.display = 'none';
+            canvas.style.display = 'block';
+            uiLayer.style.display = 'block';
+            score = 5;
+            player.x = canvas.width / 2 - 15;
+            player.y = canvas.height - 50;
+            bullets = [];
+            enemies = [];
+            gameActive = true;
+            animate();
+        }
+
+        function stopGame(message) {
+            gameActive = false;
+            cancelAnimationFrame(animationId);
+            if(message) alert(message);
+            menu.style.display = 'block';
+            canvas.style.display = 'none';
+            uiLayer.style.display = 'none';
+        }
+
+        // 核心：修正后的键盘监听
+        window.addEventListener('keydown', e => {
+            const key = e.key.toLowerCase();
+            keys[key] = true;
+            
+            // Q 键退出
+            if (key === 'q' && gameActive) {
+                stopGame("中途退出游戏");
+            }
+            
+            // 空格发射
+            if (e.code === 'Space' && gameActive) {
+                bullets.push({ x: player.x + 13, y: player.y, w: 4, h: 10 });
+            }
+        });
+
+        window.addEventListener('keyup', e => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        function update() {
+            if (!gameActive) return;
+
+            // 移动逻辑 - 修复 D 和 S 判定
+            if ((keys['w'] || keys['arrowup']) && player.y > 0) player.y -= player.speed;
+            if ((keys['s'] || keys['arrowdown']) && player.y < canvas.height - player.h) player.y += player.speed;
+            if ((keys['a'] || keys['arrowleft']) && player.x > 0) player.x -= player.speed;
+            if ((keys['d'] || keys['arrowright']) && player.x < canvas.width - player.w) player.x += player.speed;
+
+            // 子弹
+            bullets.forEach((b, i) => {
+                b.y -= 7;
+                if (b.y < 0) bullets.splice(i, 1);
+            });
+
+            // 敌机生成
+            if (Math.random() < 0.03) {
+                enemies.push({ x: Math.random() * (canvas.width - 30), y: -30, w: 30, h: 25 });
+            }
+
+            // 敌机逻辑
+            enemies.forEach((e, i) => {
+                e.y += 2.5; // 敌机速度也稍微调慢了一点
+                
+                // 击中敌机
+                bullets.forEach((b, bi) => {
+                    if (b.x < e.x + e.w && b.x + b.w > e.x && b.y < e.y + e.h && b.y + b.h > e.y) {
+                        enemies.splice(i, 1);
+                        bullets.splice(bi, 1);
+                        score++;
+                    }
+                });
+
+                // 撞击玩家
+                if (e.x < player.x + player.w && e.x + e.w > player.x && e.y < player.y + player.h && e.y + e.h > player.y) {
+                    enemies.splice(i, 1);
+                    score--;
+                }
+                
+                if (e.y > canvas.height) enemies.splice(i, 1);
+            });
+
+            scoreText.innerText = score;
+            if (score <= 0) {
+                stopGame("游戏结束！");
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制玩家
+            ctx.fillStyle = selectedColor;
+            ctx.beginPath();
+            ctx.moveTo(player.x + 15, player.y);
+            ctx.lineTo(player.x, player.y + 30);
+            ctx.lineTo(player.x + 30, player.y + 30);
+            ctx.fill();
+
+            // 子弹
+            ctx.fillStyle = '#ff0';
+            bullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+
+            // 敌机
+            ctx.fillStyle = '#f44';
+            enemies.forEach(e => {
+                ctx.fillRect(e.x, e.y, e.w, e.h / 2);
+                ctx.fillRect(e.x + 10, e.y + e.h / 2, 10, e.h / 2);
+            });
+        }
+
+        function animate() {
+            if (!gameActive) return;
+            update();
+            draw();
+            animationId = requestAnimationFrame(animate);
+        }
+    </script>
+</body>
+</html>
